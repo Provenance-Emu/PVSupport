@@ -16,86 +16,21 @@ or alternatively using `brew cask install fastlane`
 
 # Available Actions
 ## iOS
-### ios setup_fastlane
-```
-fastlane ios setup_fastlane
-```
-Setup fastlane enviroment
 ### ios test
 ```
 fastlane ios test
 ```
 Build and run tests
-### ios travistest
-```
-fastlane ios travistest
-```
-Travis Test
-### ios userbuild
-```
-fastlane ios userbuild
-```
-User Setup
-### ios updatePlistForBranch
-```
-fastlane ios updatePlistForBranch
-```
-Updates the bundle id and app name if a beta build
-### ios plist_reset
-```
-fastlane ios plist_reset
-```
-Resets the bundle id and app name after build
-### ios personal
-```
-fastlane ios personal
-```
-Create a build for users 
-### ios install
-```
-fastlane ios install
-```
-Install last build to device
-### ios beta
-```
-fastlane ios beta
-```
-Provenace Team: Push a new beta build to TestFlight
-### ios alpha
-```
-fastlane ios alpha
-```
-Provenace Team: Push a new alpha build to Hockeyapp
-### ios add_badge
-```
-fastlane ios add_badge
-```
-Add proper badge to icon
 ### ios check_env
 ```
 fastlane ios check_env
 ```
 
-### ios certificates
-```
-fastlane ios certificates
-```
-Setup Certs for Match - New Devs
 ### ios rome_download
 ```
 fastlane ios rome_download
 ```
 Download cached Rome builds
-### ios create_certificates
-```
-fastlane ios create_certificates
-```
-Create Certs for Match
-### ios update_devices
-```
-fastlane ios update_devices
-```
-Update device UDID list in iTunes connect from fastlane/devices.text
 ### ios derived_data
 ```
 fastlane ios derived_data
@@ -110,11 +45,6 @@ Reset build enviroment
 Use this lane if you're having build issues
 
 Use `git stash` first to save any changes you may want to keep.
-### ios build_appstore
-```
-fastlane ios build_appstore
-```
-Exports a new AppStore Build
 ### ios carthage_bootstrap_ios
 ```
 fastlane ios carthage_bootstrap_ios
