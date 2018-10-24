@@ -1,0 +1,291 @@
+# This file contains the fastlane.tools configuration
+# You can find the documentation at https://docs.fastlane.tools
+#
+# For a list of all available actions, check out
+#
+#     https://docs.fastlane.tools/actions
+#
+# For a list of all available plugins, check out
+#
+#     https://docs.fastlane.tools/plugins/available-plugins
+#
+
+# TODO: Fix files getting deleted after - upload to my server and host them, script to let other setup their builds - script to download and resign latest build from web
+# script to resign the last local archive and copy to device
+# use is_ci to detect travis
+# lane_context[SharedValues::IPA_OUTPUT_PATH] lane_context[SharedValues::BUILD_NUMBER] https://docs.fastlane.tools/advanced/#lane-context
+# CredentialsManager https://github.com/fastlane/fastlane/tree/master/credentials_manager
+# clipboard clipboard(value: lane_context[SharedValues::HOCKEY_DOWNLOAD_LINK] || "")
+# twitter https://github.com/rb-de0/fastlane-plugin-twitter
+# Uncomment the line if you want fastlane to automatically update itself
+#update_fastlane
+
+REQUIRED_XCODE_VERSION = "9.3.1"
+# Can also use .xcode-version file
+
+default_platform(:ios)
+
+platform :ios do
+
+  $carthage_paths = ["./"]
+  $dev_domain = ENV["DEV_DOMAIN"] || "com.joemattiello"
+
+  def load_keys
+    if is_ci?
+      return
+    end
+
+    begin
+      import("keys")
+      $dev_domain = ENV["DEV_DOMAIN"]
+    rescue => exception
+      if UI.interactive?
+        shouldSetup = UI.confirm "Fastlane enviroment is not configured. Setup now?"
+        UI.message "This feature not yet implimented. Manually edit fastlane/keys using keys.template as an example."
+      end
+      raise exception
+    end
+  end
+
+  def uploadToWordpress(file)
+    url = URI.parse('https://www.provenance-emu.com/wp/v2/media')
+    filename = File.basename(file)
+    File.open(file) do |ipa|
+    req = Net::HTTP::Post::Multipart.new url.path,
+      "file" => UploadIO.new(ipa, "application/octet-stream", filename)
+      res = Net::HTTP.start(url.host, url.port) do |http|
+        http.request(req)
+      end
+      UI.message "Wordpress response code: #{res.code}"
+    end
+  end
+
+  before_all do
+    git_pull(only_tags: true)
+  end
+
+  private_lane :verify_xcode_version do
+    ensure_xcode_version(version: REQUIRED_XCODE_VERSION)
+  end
+
+  desc "Build and run tests"
+  lane :test do
+    scan
+  end
+
+  private_lane :pre_build do
+    #get_certificates           # invokes cert
+    #get_provisioning_profile   # invokes sigh
+
+    # Git git commit count
+    ENV["build_number"] = number_of_commits().to_s
+
+    updatePlistForBranch
+
+    # Clean the dir for git
+    # ensure_git_status_clean
+    # ensure_git_in_sync
+
+    git_submodule_update
+
+    # certificates # Download the certs?
+    setup_certificates_private
+
+    # temporarily disable automatic code signing
+    codesign_toggle(automatic: false)
+
+    if is_ci?
+      rome_download
+    end
+    # carthage_bootstrap
+  end
+
+  private_lane :scp_upload do |options|
+
+    source = options[:source]
+    subfolder = options[:subfolder]
+
+    unless File.exist?(source)
+      UI.user_error!("Couldn't find file '#{source}'")
+    end
+
+    filename = File.basename(source)
+
+
+    host = "provenance.joemattiello.com"
+    port = "22"
+
+    destination = "/usr/share/nginx/provenance.joemattiello.com/www/TravisBuilds/#{git_branch}/#{subfolder}/#{filename}"
+    username = "provenance" #ENV["FASTLANE_USER"],
+
+    UI.message "SCP'ing from #{source} to #{host}:#{destination}"
+
+    scp(
+      username: username,
+      # password: ENV["FASTLANE_PASSWORD"],
+      host: host,
+      port: port,
+      upload: {
+        src: source,
+        dst: destination
+      }
+    )
+  end
+
+  private_lane :reset_enviroment do
+    plist_reset
+    codesign_toggle(automatic: true)
+    # Make sure our directory is clean, except for changes Fastlane has made
+    clean_build_artifacts
+  end
+
+  lane :check_env do
+    desc "Environment Settings"
+    puts "APP_IDENTIFIER: #{ENV['APP_IDENTIFIER']}"
+    puts "APP_NAME: #{ENV['APP_NAME']}"
+    puts "APP_SKU: #{ENV['APP_SKU']}"
+    puts "LANG_CODE #{ENV['LANG_CODE']}"
+  end
+
+  desc "Download cached Rome builds"
+  lane :rome_download do
+    swift_version = sh("swift --version | head -1 | sed 's/.*\((.*)\).*/\1/' | tr -d \"()\" | tr \" \" \"-\"")
+    srcroot = Dir.pwd
+
+    rome(
+    # frameworks: ["MyFramework1", "MyFramework2"],   # Specify which frameworks to upload or download
+    command: "download",                              # One of: download, upload, list
+    #verbose: false,                                 # Print rome output inline
+    platform: "iOS",                                # Define which platform to build for (one of 'all', 'Mac', 'iOS', 'watchOS', 'tvOS', or comma-separated values of the formers except for 'all')
+    cacheprefix: swift_version,
+    #romefile: "#{dir}/Romefile"
+    )
+  end
+
+  desc "Clear your DerivedData"
+  lane :derived_data do
+    clear_derived_data
+  end
+
+  desc "Reset build enviroment"
+  desc "Use this lane if you're having build issues"
+  desc "Use `git stash` first to save any changes you may want to keep."
+  lane :reset_checkout do
+
+    UI.important "This lane is destructive and can delete unsaved changed."
+    if !UI.confirm("Are you sure?")
+      next
+    end
+
+    # clean xcode's build enviroment with xcodebuild
+    UI.message "Cleaning target PVSupport."
+    xcclean(scheme: "PVSupport")
+
+    if UI.confirm("Clear XCode's derived data?")
+      clear_derived_data
+    end
+
+    UI.header("GIT Reset")
+    clean = UI.confirm("Run 'git clean' to avoid removing untracked files? \nRecomended unless you have new files to save. Alternatively, use `git stash`.")
+    disregard_gitignore = clean
+    if clean
+      disregard_gitignore = UI.confirm("Disregard .gitignore (Recomended)? If you want the equivalent of a fresh clone, and for all untracked and ignore files to also be removed.")
+    end
+
+    reset_git_repo(
+      force: true,
+      skip_clean: !clean,
+      disregard_gitignore: disregard_gitignore
+    )
+
+    UI.success("Project directory reset.")
+  end
+
+  desc "Lane to run bootstrap carthage in new checkout for iOS only"
+  lane :carthage_bootstrap_ios do |options|
+    carthage_bootstrap(
+      platform: "iOS"
+    )
+  end
+
+  desc "Lane to run bootstrap carthage in new checkout for tvOS only"
+  lane :carthage_bootstrap_tvos do |options|
+    carthage_bootstrap(
+      platform: "tvOS"
+    )
+  end
+
+  desc "Lane to run bootstrap carthage in new checkout"
+  desc "Option: `platform` tvOS,iOS"
+  lane :carthage_bootstrap do |options|
+    platform = options.fetch(:platform, 'tvOS,iOS')
+    dirs = options.fetch(:directory, 'PVSupport,PVLibrary,./')
+
+    dirs.split(',').each do |dir|
+      carthage_private(
+        command: "bootstrap",
+        platform: platform,
+        project_directory: dir
+      )
+    end
+  end
+
+  desc "Lane to run build all carthage dependencies"
+  desc "Option: `platform` tvOS,iOS"
+  lane :carthage_build do |options|
+    platform = options.fetch(:platform, 'tvOS,iOS')
+
+    $carthage_paths.each do |dir| 
+      carthage_private(
+      command: "build",
+      platform: platform,
+      project_directory: dir
+    )
+    end
+  end
+
+  desc "Lane to update all carthage dependencies to latest versions"
+  desc "Option: `platform` tvOS,iOS"
+  lane :carthage_update do |options|
+    platform = options.fetch(:platform, 'tvOS,iOS')
+
+    $carthage_paths.each do |dir| 
+      carthage_private(
+      command: "update",
+      platform: platform,
+      project_directory: dir
+    )
+    end
+  end
+
+  desc "Lane to update all carthage dependencies to latest versions for iOS only"
+  lane :carthage_update_ios do |options|
+    carthage_update(
+      platform: "iOS"
+    )
+  end
+
+  desc "Lane to update all carthage dependencies to latest versions for tvOS only"
+  lane :carthage_update_tvos do |options|
+    carthage_update(
+      platform: "tvOS"
+    )
+  end
+
+  private_lane :carthage_private do |options|
+    command = options.fetch(:command, 'bootstrap')
+    platform = options.fetch(:platform, 'tvOS,iOS')
+    project_directory = options.fetch(:project_directory, './')
+
+    UI.message "Running Carthage command '#{command}' for platform(s) '#{platform}' in directory '#{project_directory}'"
+
+    carthage(
+      command: command,
+      platform: platform,
+      use_binaries: true,
+      cache_builds: true,
+      project_directory: project_directory
+    )
+  end
+
+end
